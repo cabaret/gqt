@@ -1,7 +1,7 @@
 ## Interface: 110100
 ## Title: Gold Quest Tracker
 ## Notes: Tracks world quests that give gold rewards in the latest expansion zones
-## Author: Joris Ooms
+## Author: carrots-silvermoon / Joris Ooms
 ## Version: 1.0
 ## SavedVariables: GoldQuestTrackerDB
 
@@ -11,5 +11,7 @@ Libs\CallbackHandler-1.0\CallbackHandler-1.0\CallbackHandler-1.0.lua
 Libs\LibDataBroker-1.1\LibDataBroker-1.1.lua
 Libs\LibDBIcon-1.0\LibDBIcon-1.0\LibDBIcon-1.0.lua
 
-# Main File
-GoldQuestTracker.lua
+Utils.lua
+Config.lua
+Core.lua
+UI.lua
