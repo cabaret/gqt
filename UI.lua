@@ -4,12 +4,10 @@ local LDB = LibStub 'LibDataBroker-1.1'
 
 GQT.UI = {}
 
--- Helper function to properly clear all content
 function GQT.UI:ClearContent()
   local content = self.mainFrame.content
   if not content then return end
   
-  -- Get all children and store them in a table first
   local children = {}
   for i = 1, content:GetNumChildren() do
     local child = select(i, content:GetChildren())
@@ -18,16 +16,13 @@ function GQT.UI:ClearContent()
     end
   end
   
-  -- Now safely remove all children
   for _, child in ipairs(children) do
     child:Hide()
     child:SetParent(nil)
   end
   
-  -- Reset content height
   content:SetHeight(1)
   
-  -- Update scrollbar
   if self.mainFrame.UpdateScrollbar then
     self.mainFrame.UpdateScrollbar()
   end
@@ -44,20 +39,19 @@ function GQT.UI:DisplayQuests()
   end
 
   table.sort(GQT.goldQuests, function(a, b)
-    return a.gold > b.gold
+    return a.goldReward > b.goldReward
   end)
 
   self:CreateMainFrame()
 
   self.mainFrame.title:SetText('Gold World Quests (' .. #GQT.goldQuests .. ')')
 
-  -- Clear existing content first
   self:ClearContent()
   local content = self.mainFrame.content
 
   local totalGold = 0
   for _, quest in ipairs(GQT.goldQuests) do
-    totalGold = totalGold + quest.gold
+    totalGold = totalGold + quest.goldReward
   end
 
   self.mainFrame.totalGoldText:SetText('Total Gold: ' .. GQT.Utils:FormatMoney(totalGold))
@@ -90,7 +84,7 @@ function GQT.UI:DisplayQuests()
       GameTooltip:SetOwner(self, 'ANCHOR_RIGHT')
       GameTooltip:SetText(quest.title, 1, 0.8, 0)
       GameTooltip:AddLine(quest.zone, 0.7, 0.7, 1)
-      GameTooltip:AddLine('Reward: ' .. GQT.Utils:FormatMoney(quest.gold), 1, 0.8, 0)
+      GameTooltip:AddLine('Reward: ' .. GQT.Utils:FormatMoney(quest.goldReward), 1, 0.8, 0)
       GameTooltip:AddLine('Time remaining: ' .. quest.timeLeft, 1, 0.7, 0.7)
       GameTooltip:AddLine ' '
       GameTooltip:AddLine('Click to track this quest', 0, 1, 0)
@@ -118,7 +112,7 @@ function GQT.UI:DisplayQuests()
     local reward = entry:CreateFontString(nil, 'OVERLAY')
     reward:SetFont('Fonts\\FRIZQT__.TTF', 11, 'OUTLINE')
     reward:SetPoint('TOPRIGHT', entry, 'TOPRIGHT', -16, -5)
-    reward:SetText(GQT.Utils:FormatMoney(quest.gold))
+    reward:SetText(GQT.Utils:FormatMoney(quest.goldReward))
     reward:SetTextColor(1, 0.8, 0)
 
     local time = entry:CreateFontString(nil, 'OVERLAY')
@@ -176,10 +170,8 @@ function GQT.UI:ShowEmptyState(loading)
 
   self.mainFrame.title:SetText('Gold World Quests (0)')
   
-  -- Hide total gold text when loading or empty
   self.mainFrame.totalGoldText:Hide()
 
-  -- Properly clear all content
   self:ClearContent()
   local content = self.mainFrame.content
 
@@ -228,7 +220,6 @@ function GQT.UI:CreateMinimapIcon()
       if button == 'LeftButton' then
         if self.mainFrame and self.mainFrame:IsShown() then
           self.mainFrame:Hide()
-          GQT:PreCacheQuestData()
         elseif self.mainFrame then
           GQT:ScanForGoldQuests()
           self.mainFrame:Show()
@@ -417,9 +408,8 @@ function GQT.UI:CreateMainFrame()
   end)
 
   refreshButton:SetScript('OnClick', function()
-    -- Force refresh flag makes the addon ignore the current scan state
-    GQT.forceRefresh = true
-    GQT:PreCacheQuestData()
+    GQT:ClearCache()
+    GQT.lastScanTime = 0
     GQT:ScanForGoldQuests()
   end)
 
