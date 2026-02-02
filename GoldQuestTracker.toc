@@ -1,8 +1,8 @@
 ## Interface: 120000
 ## Title: Gold Quest Tracker
 ## Notes: Efficiently tracks world quests that give gold rewards across all expansion zones
-## Author: carrots-silvermoon / Joris Ooms
-## Version: 2.0
+## Author: carrots-silvermoon
+## Version: 0.3.0
 ## SavedVariables: GoldQuestTrackerDB
 Libs\LibStub\LibStub.lua
 Libs\CallbackHandler-1.0\CallbackHandler-1.0\CallbackHandler-1.0.lua
