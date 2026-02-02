@@ -36,10 +36,7 @@ function GQT:Initialize()
 end
 
 function GQT:PLAYER_ENTERING_WORLD()
-  C_Timer.After(3, function()
-    print '|cFFFFD700Gold Quest Tracker:|r Ready. Use /gqt to open.'
-    self:ScanForGoldQuests(true) -- silent scan on login
-  end)
+  print '|cFFFFD700Gold Quest Tracker:|r Ready. Use /gqt to open.'
 end
 
 function GQT:QUEST_LOG_UPDATE()
@@ -55,13 +52,13 @@ end
 
 function GQT:WORLD_QUEST_COMPLETED_BY_SPELL()
   C_Timer.After(1, function()
-    if not self.isScanning then
-      self:ScanForGoldQuests(true) -- silent rescan when quest completed
+    if not self.isScanning and self.UI.mainFrame and self.UI.mainFrame:IsShown() then
+      self:ScanForGoldQuests()
     end
   end)
 end
 
-function GQT:ScanForGoldQuests(silent)
+function GQT:ScanForGoldQuests()
   local currentTime = GetTime()
 
   if self.isScanning or (currentTime - self.lastScanTime < self.scanCooldown) then
@@ -75,8 +72,7 @@ function GQT:ScanForGoldQuests(silent)
   self.lastScanTime = currentTime
   self.goldQuests = {}
 
-  -- Only show loading state if not silent and UI is visible
-  if not silent and self.UI and self.UI.mainFrame and self.UI.mainFrame:IsShown() then
+  if self.UI then
     self.UI:ShowEmptyState(true)
   end
 
@@ -89,10 +85,7 @@ function GQT:ScanForGoldQuests(silent)
     if self.isScanning then
       self:ProcessQuestData()
       self.isScanning = false
-      -- Only update UI if not silent or if UI is already visible
-      if not silent or (self.UI.mainFrame and self.UI.mainFrame:IsShown()) then
-        self.UI:DisplayQuests()
-      end
+      self.UI:DisplayQuests()
     end
   end)
 end
