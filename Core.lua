@@ -1,29 +1,34 @@
 local addonName, GQT = ...
 
-GQT.pendingQuestData = {}
-GQT.totalQuestsToLoad = 0
-GQT.loadedQuests = {}
 GQT.goldQuests = {}
-GQT.isProcessing = false
-GQT.zonesScanned = 0
-GQT.totalZones = 0
-GQT.scanActive = false
-GQT.scanAttempt = 0
-GQT.dataReady = false
+GQT.isScanning = false
+GQT.lastScanTime = 0
+GQT.scanCooldown = 30
+GQT.questCache = {}
+GQT.eventFrame = nil
 
 function GQT:Initialize()
-  self.db = _G.GoldQuestTrackerDB or CopyTable(defaults)
+  self.db = _G.GoldQuestTrackerDB or CopyTable(GQT.Config.defaults)
   _G.GoldQuestTrackerDB = self.db
+  
+  if self.db.trackedZones then
+    GQT.Config.trackedZones = self.db.trackedZones
+  end
+  if self.db.minimumGoldReward then
+    GQT.Config.minimumGoldReward = self.db.minimumGoldReward
+  end
 
   print '|cFFFFD700Gold Quest Tracker:|r Addon loaded.'
 
   GQT.UI:CreateMinimapIcon()
   GQT.UI:CreateMainFrame()
+  GQT.Options:CreateOptionsPanel()
 
-  self.frame = CreateFrame 'Frame'
-  self.frame:RegisterEvent 'QUEST_DATA_LOAD_RESULT'
-  self.frame:RegisterEvent 'PLAYER_ENTERING_WORLD'
-  self.frame:SetScript('OnEvent', function(_, event, ...)
+  self.eventFrame = CreateFrame 'Frame'
+  self.eventFrame:RegisterEvent 'PLAYER_ENTERING_WORLD'
+  self.eventFrame:RegisterEvent 'QUEST_LOG_UPDATE'
+  self.eventFrame:RegisterEvent 'WORLD_QUEST_COMPLETED_BY_SPELL'
+  self.eventFrame:SetScript('OnEvent', function(_, event, ...)
     if self[event] then
       self[event](self, ...)
     end
@@ -31,205 +36,217 @@ function GQT:Initialize()
 end
 
 function GQT:PLAYER_ENTERING_WORLD()
-  C_Timer.After(5, function()
-    self.dataReady = true
+  C_Timer.After(3, function()
     print '|cFFFFD700Gold Quest Tracker:|r World data loaded and ready.'
-
-    self:PreCacheQuestData()
+    self:ScanForGoldQuests()
   end)
 end
 
-function GQT:PreCacheQuestData()
-  for mapID, _ in pairs(GQT.Config.trackedZones) do
-    local zoneQuests = C_TaskQuest.GetQuestsForPlayerByMapID(mapID) or {}
-    for _, questData in ipairs(zoneQuests) do
-      if questData.mapID == mapID and C_QuestLog.IsWorldQuest(questData.questID) then
-        C_TaskQuest.RequestPreloadRewardData(questData.questID)
-      end
-    end
+function GQT:QUEST_LOG_UPDATE()
+  if not self.isScanning then
+    return
   end
+  
+  local currentTime = GetTime()
+  if currentTime - self.lastScanTime > 2 then
+    self:ProcessQuestData()
+  end
+end
 
-  if GQT.Config.debug then
-    print '|cFFFFD700Gold Quest Tracker:|r Pre-cached quest data for faster response.'
-  end
+function GQT:WORLD_QUEST_COMPLETED_BY_SPELL()
+  C_Timer.After(1, function()
+    if not self.isScanning then
+      self:ScanForGoldQuests()
+    end
+  end)
 end
 
 function GQT:ScanForGoldQuests()
-  if self.scanActive then
-    print '|cFFFFD700Gold Quest Tracker:|r Scan already in progress. Please wait...'
+  local currentTime = GetTime()
+  
+  if self.isScanning or (currentTime - self.lastScanTime < self.scanCooldown) then
+    if GQT.Config.debug then
+      print('|cFFFFD700Gold Quest Tracker:|r Scan already in progress or on cooldown.')
+    end
     return
   end
-
-  if not self.dataReady then
-    print '|cFFFFD700Gold Quest Tracker:|r World data not fully loaded yet. Please try again in a few seconds.'
-    return
-  end
-
-  self.scanActive = true
-  self.pendingQuestData = {}
-  self.loadedQuests = {}
+  
+  self.isScanning = true
+  self.lastScanTime = currentTime
   self.goldQuests = {}
-  self.totalQuestsToLoad = 0
-  self.isProcessing = false
-  self.zonesScanned = 0
-  self.totalZones = 0
-  self.scanAttempt = 1
-
-  if self.debug then
-    print('|cFFFFD700Gold Quest Tracker:|r Starting scan for gold quests (attempt ' .. self.scanAttempt .. ')...')
+  
+  if self.UI then
+    self.UI:ShowEmptyState(true)
   end
-
-  for _ in pairs(GQT.Config.trackedZones) do
-    self.totalZones = self.totalZones + 1
+  
+  if GQT.Config.debug then
+    print('|cFFFFD700Gold Quest Tracker:|r Starting quest scan...')
   end
-
-  self:PerformZoneScan()
+  
+  self:PreloadQuestData()
+  C_Timer.After(3, function()
+    if self.isScanning then
+      self:ProcessQuestData()
+      self.isScanning = false
+      self.UI:DisplayQuests()
+    end
+  end)
 end
 
-function GQT:PerformZoneScan()
+function GQT:PreloadQuestData()
+  local preloadCount = 0
+  
   for mapID, zoneName in pairs(GQT.Config.trackedZones) do
-    self:ScanForGoldQuestsInZone(mapID, zoneName)
-  end
-
-  if self.totalQuestsToLoad == 0 and self.scanAttempt >= 3 then
-    print '|cFFFFD700Gold Quest Tracker:|r No quests found.'
-    GQT.UI:DisplayQuests()
-    self.scanActive = false
-  end
-end
-
-function GQT:ScanForGoldQuestsInZone(mapID, zoneName)
-  local zoneQuests = C_TaskQuest.GetQuestsForPlayerByMapID(mapID) or {}
-  local filteredQuests = {}
-
-  for _, questData in ipairs(zoneQuests) do
-    if questData.mapID == mapID and C_QuestLog.IsWorldQuest(questData.questID) then
-      table.insert(filteredQuests, questData)
-    end
-  end
-
-  if self.debug then
-    print('|cFFFFD700GQT Debug:|r Found ' .. #filteredQuests .. ' quests in ' .. zoneName)
-  end
-
-  self.totalQuestsToLoad = self.totalQuestsToLoad + #filteredQuests
-  self.zonesScanned = self.zonesScanned + 1
-
-  if #filteredQuests > 0 then
-    for _, questData in ipairs(filteredQuests) do
-      local questID = questData.questID
-      if C_QuestLog.IsWorldQuest(questID) then
-        self.pendingQuestData[questID] = true
-        if HaveQuestData(questID) then
-          C_Timer.After(0.1, function()
-            self:QUEST_DATA_LOAD_RESULT(questID, true)
-          end)
-        else
-          C_TaskQuest.RequestPreloadRewardData(questID)
-        end
+    local zoneQuests = C_TaskQuest.GetQuestsForPlayerByMapID(mapID) or {}
+    
+    for _, questData in ipairs(zoneQuests) do
+      if questData.questID and C_QuestLog.IsWorldQuest(questData.questID) then
+        C_TaskQuest.RequestPreloadRewardData(questData.questID)
+        preloadCount = preloadCount + 1
       end
     end
   end
-
-  if self.zonesScanned == self.totalZones and self.totalQuestsToLoad == 0 then
-    self.isProcessing = true
-    self:ProcessLoadedQuests()
-  end
+  
 end
 
-function GQT:QUEST_DATA_LOAD_RESULT(questID, success)
-  if not self.pendingQuestData[questID] or not self.scanActive then
-    return
-  end
-
-  if success then
-    self.pendingQuestData[questID] = nil
-    self.loadedQuests[questID] = true
-
-    local loadedCount = 0
-    for _ in pairs(self.loadedQuests) do
-      loadedCount = loadedCount + 1
-    end
-
-    local allLoaded = loadedCount == self.totalQuestsToLoad
-    local allZonesScanned = self.zonesScanned == self.totalZones
-
-    if allLoaded and allZonesScanned and not self.isProcessing then
-      self.isProcessing = true
-      self:ProcessLoadedQuests()
-    end
-  else
-    if self.debug then
-      print('|cFFFFD700Gold Quest Tracker:|r Failed to load data for quest ID: ' .. questID)
-    end
-    self.pendingQuestData[questID] = nil
-
-    local pendingCount = 0
-    for _ in pairs(self.pendingQuestData) do
-      pendingCount = pendingCount + 1
-    end
-
-    if pendingCount == 0 and self.zonesScanned == self.totalZones and not self.isProcessing then
-      self.isProcessing = true
-      self:ProcessLoadedQuests()
-    end
-  end
-end
-
-function GQT:ProcessLoadedQuests()
-  if not self.scanActive then
-    return
-  end
-
-  for questID in pairs(self.loadedQuests) do
-    local questName = C_TaskQuest.GetQuestInfoByQuestID(questID)
-    local mapID = C_TaskQuest.GetQuestZoneID(questID)
-    local locationX, locationY = C_TaskQuest.GetQuestLocation(questID, mapID)
-    local location = { x = locationX, y = locationY }
-
-    if not questName or not mapID then
-      if self.debug then
-        print('|cFFFFD700Gold Quest Tracker:|r Missing data for quest ID: ' .. questID)
-      end
-    else
-      local mapInfo = C_Map.GetMapInfo(mapID)
-      local zoneName = mapInfo and mapInfo.name or 'Unknown Zone'
-      local moneyReward = GetQuestLogRewardMoney(questID)
-
-      if moneyReward and moneyReward > 0 then
-        if self.debug then
-          print('Processing quest: ' .. questName .. ' - Gold: ' .. moneyReward)
-        end
-        local timeLeft = 'Unknown'
-        local timeLeftMinutes = C_TaskQuest.GetQuestTimeLeftMinutes(questID)
-
-        if timeLeftMinutes then
-          if timeLeftMinutes <= 60 then
-            timeLeft = string.format('%d mins', timeLeftMinutes)
-          else
-            local hours = math.floor(timeLeftMinutes / 60)
-            local mins = timeLeftMinutes % 60
-            timeLeft = string.format('%dh %dm', hours, mins)
+function GQT:ProcessQuestData()
+  local foundQuests = 0
+  local totalQuests = 0
+  local worldQuests = 0
+  
+  for mapID, zoneName in pairs(GQT.Config.trackedZones) do
+    local zoneQuests = C_TaskQuest.GetQuestsForPlayerByMapID(mapID) or {}
+    totalQuests = totalQuests + #zoneQuests
+    
+    
+    for _, questData in ipairs(zoneQuests) do
+      if questData.questID and C_QuestLog.IsWorldQuest(questData.questID) then
+        worldQuests = worldQuests + 1
+        
+        
+        local questInfo = self:GetQuestRewardInfo(questData.questID, mapID)
+        if questInfo and questInfo.goldReward >= GQT.Config.minimumGoldReward then
+          local alreadyExists = false
+          for _, existingQuest in ipairs(self.goldQuests) do
+            if existingQuest.id == questData.questID then
+              alreadyExists = true
+              break
+            end
           end
-
-          table.insert(self.goldQuests, {
-            id = questID,
-            mapID = mapID,
-            title = questName,
-            zone = zoneName,
-            gold = moneyReward,
-            timeLeft = timeLeft,
-            location = location,
-            link = GetQuestLink(questID) or 'Quest Link',
-          })
+          
+          if not alreadyExists then
+            table.insert(self.goldQuests, questInfo)
+            foundQuests = foundQuests + 1
+          end
         end
       end
     end
   end
+  
+  if GQT.Config.debug then
+    print('|cFFFFD700Gold Quest Tracker:|r Scanned ' .. totalQuests .. ' total quests, ' .. worldQuests .. ' world quests, found ' .. foundQuests .. ' gold quests.')
+  end
+end
 
-  self.scanActive = false
+function GQT:GetQuestRewardInfo(questID, mapID)
+  local cacheKey = questID .. "_" .. mapID
+  
+  if self.questCache[cacheKey] and (GetTime() - self.questCache[cacheKey].timestamp) < 300 then
+    return self.questCache[cacheKey]
+  end
+  
+  if not HaveQuestData(questID) then
+    return nil
+  end
+  
+  local questName = C_TaskQuest.GetQuestInfoByQuestID(questID)
+  if not questName then 
+    return nil 
+  end
+  
+  if not mapID then
+    mapID = C_TaskQuest.GetQuestZoneID(questID)
+    if not mapID then 
+      return nil 
+    end
+  end
+  
+  local mapInfo = C_Map.GetMapInfo(mapID)
+  local zoneName = mapInfo and mapInfo.name or 'Unknown Zone'
+  
+  local locationX, locationY = C_TaskQuest.GetQuestLocation(questID, mapID)
+  local location = { x = locationX or 0.5, y = locationY or 0.5 }
+  
+  local moneyReward = 0
+  
+  if C_QuestLog.IsQuestFlaggedCompleted(questID) then
+    return nil
+  end
+  
+  if not HaveQuestRewardData(questID) then
+    C_TaskQuest.RequestPreloadRewardData(questID)
+  end
+  
+  local oldSelectedQuest = C_QuestLog.GetSelectedQuest()
+  
+  C_QuestLog.SetSelectedQuest(questID)
+  moneyReward = GetQuestLogRewardMoney() or 0
+  
+  if moneyReward <= 0 then
+    moneyReward = GetQuestLogRewardMoney(questID) or 0
+  end
+  
+  if oldSelectedQuest then
+    C_QuestLog.SetSelectedQuest(oldSelectedQuest)
+  end
+  
+  
+  if moneyReward < GQT.Config.minimumGoldReward then
+    return nil
+  end
+  
+  local timeLeft = 'Unknown'
+  local timeLeftMinutes = C_TaskQuest.GetQuestTimeLeftMinutes(questID)
+  
+  if timeLeftMinutes then
+    if timeLeftMinutes <= 60 then
+      timeLeft = string.format('%d mins', timeLeftMinutes)
+    else
+      local hours = math.floor(timeLeftMinutes / 60)
+      local mins = timeLeftMinutes % 60
+      timeLeft = string.format('%dh %dm', hours, mins)
+    end
+  end
+  
+  local questInfo = {
+    id = questID,
+    mapID = mapID,
+    title = questName,
+    zone = zoneName,
+    goldReward = moneyReward,
+    timeLeft = timeLeft,
+    location = location,
+    link = GetQuestLink(questID) or 'Quest Link',
+    timestamp = GetTime()
+  }
+  
+  self.questCache[cacheKey] = questInfo
+  
+  
+  return questInfo
+end
 
-  GQT.UI:DisplayQuests()
+function GQT:FormatMoney(copper)
+  local gold = math.floor(copper / 10000)
+  local silver = math.floor((copper % 10000) / 100)
+  return gold .. "g " .. silver .. "s"
+end
+
+function GQT:ClearCache()
+  self.questCache = {}
+  if GQT.Config.debug then
+    print('|cFFFFD700Gold Quest Tracker:|r Cache cleared.')
+  end
 end
 
 local function SlashCommandHandler(msg)
@@ -238,25 +255,37 @@ local function SlashCommandHandler(msg)
   if msg == '' then
     if GQT.UI.mainFrame and GQT.UI.mainFrame:IsShown() then
       GQT.UI.mainFrame:Hide()
-      GQT:PreCacheQuestData()
     else
       GQT:ScanForGoldQuests()
       GQT.UI.mainFrame:Show()
     end
+  elseif msg == 'scan' then
+    GQT:ScanForGoldQuests()
+  elseif msg == 'clear' then
+    GQT:ClearCache()
+  elseif msg == 'debug' then
+    GQT.Config.debug = not GQT.Config.debug
+    print('|cFFFFD700Gold Quest Tracker:|r Debug mode ' .. (GQT.Config.debug and 'enabled' or 'disabled'))
+  elseif msg == 'options' or msg == 'config' then
+    GQT.Options:OpenPanel()
   elseif msg == 'help' then
     print '|cFFFFD700Gold Quest Tracker:|r Commands:'
-    print '  /gqt - Scan for gold world quests'
+    print '  /gqt - Toggle addon window'
+    print '  /gqt scan - Force scan for gold world quests'
+    print '  /gqt clear - Clear quest cache'
+    print '  /gqt debug - Toggle debug mode'
+    print '  /gqt options - Open options panel'
     print '  /gqt help - Show this help message'
   else
     print '|cFFFFD700Gold Quest Tracker:|r Unknown command. Type /gqt help for available commands.'
   end
 
   if ChatFrameEditBox then
-    ChatFrameEditBox:Hide()  -- For older versions of WoW
+    ChatFrameEditBox:Hide()
   elseif ChatFrame1EditBox then
-    ChatFrame1EditBox:Hide() -- Alternative in case the previous doesn't work
+    ChatFrame1EditBox:Hide()
   else
-    ChatFrame_CloseChat()    -- Works for newer versions of WoW
+    ChatFrame_CloseChat()
   end
 end
 

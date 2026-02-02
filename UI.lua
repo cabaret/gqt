@@ -4,8 +4,32 @@ local LDB = LibStub 'LibDataBroker-1.1'
 
 GQT.UI = {}
 
+function GQT.UI:ClearContent()
+  local content = self.mainFrame.content
+  if not content then return end
+  
+  local children = {}
+  for i = 1, content:GetNumChildren() do
+    local child = select(i, content:GetChildren())
+    if child then
+      table.insert(children, child)
+    end
+  end
+  
+  for _, child in ipairs(children) do
+    child:Hide()
+    child:SetParent(nil)
+  end
+  
+  content:SetHeight(1)
+  
+  if self.mainFrame.UpdateScrollbar then
+    self.mainFrame.UpdateScrollbar()
+  end
+end
+
 function GQT.UI:DisplayQuests()
-  if self.debug then
+  if GQT.Config.debug then
     print('|cFFFFD700Gold Quest Tracker:|r Found ' .. #GQT.goldQuests .. ' gold quests.')
   end
 
@@ -15,37 +39,23 @@ function GQT.UI:DisplayQuests()
   end
 
   table.sort(GQT.goldQuests, function(a, b)
-    return a.gold > b.gold
+    return a.goldReward > b.goldReward
   end)
 
   self:CreateMainFrame()
 
   self.mainFrame.title:SetText('Gold World Quests (' .. #GQT.goldQuests .. ')')
 
+  self:ClearContent()
   local content = self.mainFrame.content
-  -- Store a temporary table of children to avoid modification during iteration
-  local children = {}
-  for i = 1, content:GetNumChildren() do
-    local child = select(i, content:GetChildren())
-    if child then
-      table.insert(children, child)
-    end
-  end
-
-  for i, child in ipairs(children) do
-    child:Hide()
-    child:SetParent(nil)
-    children[i] = nil
-  end
-
-  children = nil
 
   local totalGold = 0
   for _, quest in ipairs(GQT.goldQuests) do
-    totalGold = totalGold + quest.gold
+    totalGold = totalGold + quest.goldReward
   end
 
   self.mainFrame.totalGoldText:SetText('Total Gold: ' .. GQT.Utils:FormatMoney(totalGold))
+  self.mainFrame.totalGoldText:Show()
 
   local yOffset = -10
   for i, quest in ipairs(GQT.goldQuests) do
@@ -74,7 +84,7 @@ function GQT.UI:DisplayQuests()
       GameTooltip:SetOwner(self, 'ANCHOR_RIGHT')
       GameTooltip:SetText(quest.title, 1, 0.8, 0)
       GameTooltip:AddLine(quest.zone, 0.7, 0.7, 1)
-      GameTooltip:AddLine('Reward: ' .. GQT.Utils:FormatMoney(quest.gold), 1, 0.8, 0)
+      GameTooltip:AddLine('Reward: ' .. GQT.Utils:FormatMoney(quest.goldReward), 1, 0.8, 0)
       GameTooltip:AddLine('Time remaining: ' .. quest.timeLeft, 1, 0.7, 0.7)
       GameTooltip:AddLine ' '
       GameTooltip:AddLine('Click to track this quest', 0, 1, 0)
@@ -102,7 +112,7 @@ function GQT.UI:DisplayQuests()
     local reward = entry:CreateFontString(nil, 'OVERLAY')
     reward:SetFont('Fonts\\FRIZQT__.TTF', 11, 'OUTLINE')
     reward:SetPoint('TOPRIGHT', entry, 'TOPRIGHT', -16, -5)
-    reward:SetText(GQT.Utils:FormatMoney(quest.gold))
+    reward:SetText(GQT.Utils:FormatMoney(quest.goldReward))
     reward:SetTextColor(1, 0.8, 0)
 
     local time = entry:CreateFontString(nil, 'OVERLAY')
@@ -155,19 +165,15 @@ function GQT.UI:DisplayQuests()
   self.mainFrame:Show()
 end
 
-function GQT.UI:ShowEmptyState()
+function GQT.UI:ShowEmptyState(loading)
   self:CreateMainFrame()
 
-  self.mainFrame.title:SetText 'Gold World Quests (0)'
+  self.mainFrame.title:SetText('Gold World Quests (0)')
+  
+  self.mainFrame.totalGoldText:Hide()
 
+  self:ClearContent()
   local content = self.mainFrame.content
-  for i = 1, content:GetNumChildren() do
-    local child = select(i, content:GetChildren())
-    if child then
-      child:Hide()
-      child:SetParent(nil)
-    end
-  end
 
   local emptyFrame = CreateFrame('Frame', nil, content, BackdropTemplateMixin and 'BackdropTemplate')
   emptyFrame:SetSize(content:GetWidth() - 20, 80)
@@ -188,8 +194,14 @@ function GQT.UI:ShowEmptyState()
   local emptyText = emptyFrame:CreateFontString(nil, 'OVERLAY')
   emptyText:SetFont('Fonts\\FRIZQT__.TTF', 12, 'OUTLINE')
   emptyText:SetPoint('CENTER', emptyFrame, 'CENTER', 0, 0)
-  emptyText:SetText 'No gold quests found'
-  emptyText:SetTextColor(0.7, 0.7, 0.7)
+  
+  if loading then
+    emptyText:SetText 'Loading quest data...'
+    emptyText:SetTextColor(1, 0.8, 0)
+  else
+    emptyText:SetText 'No gold quests found'
+    emptyText:SetTextColor(0.7, 0.7, 0.7)
+  end
 
   self.mainFrame:Show()
 
@@ -208,7 +220,6 @@ function GQT.UI:CreateMinimapIcon()
       if button == 'LeftButton' then
         if self.mainFrame and self.mainFrame:IsShown() then
           self.mainFrame:Hide()
-          GQT:PreCacheQuestData()
         elseif self.mainFrame then
           GQT:ScanForGoldQuests()
           self.mainFrame:Show()
@@ -397,7 +408,8 @@ function GQT.UI:CreateMainFrame()
   end)
 
   refreshButton:SetScript('OnClick', function()
-    GQT:PreCacheQuestData()
+    GQT:ClearCache()
+    GQT.lastScanTime = 0
     GQT:ScanForGoldQuests()
   end)
 
