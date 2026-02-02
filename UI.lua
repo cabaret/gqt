@@ -5,7 +5,7 @@ local LDB = LibStub 'LibDataBroker-1.1'
 GQT.UI = {}
 
 function GQT.UI:DisplayQuests()
-  if GQT.Config.debug then
+  if self.debug then
     print('|cFFFFD700Gold Quest Tracker:|r Found ' .. #GQT.goldQuests .. ' gold quests.')
   end
 
@@ -23,16 +23,22 @@ function GQT.UI:DisplayQuests()
   self.mainFrame.title:SetText('Gold World Quests (' .. #GQT.goldQuests .. ')')
 
   local content = self.mainFrame.content
-
-  -- Efficiently clear existing children using wipe pattern
-  local children = { content:GetChildren() }
-  for _, child in ipairs(children) do
+  -- Store a temporary table of children to avoid modification during iteration
+  local children = {}
+  for i = 1, content:GetNumChildren() do
+    local child = select(i, content:GetChildren())
     if child then
-      child:Hide()
-      child:SetParent(nil)
+      table.insert(children, child)
     end
   end
-  wipe(children)
+
+  for i, child in ipairs(children) do
+    child:Hide()
+    child:SetParent(nil)
+    children[i] = nil
+  end
+
+  children = nil
 
   local totalGold = 0
   for _, quest in ipairs(GQT.goldQuests) do
@@ -121,19 +127,11 @@ function GQT.UI:DisplayQuests()
 
         C_QuestLog.AddWorldQuestWatch(questID)
 
-        -- Try using GetNextWaypoint first (more accurate for quest objectives)
-        local wpMapID, wpX, wpY = C_QuestLog.GetNextWaypoint(questID)
-        if not wpMapID or not wpX or not wpY then
-          -- Fallback to stored location data
-          wpMapID, wpX, wpY = quest.mapID, quest.location.x, quest.location.y
-        end
+        local waypoint = UiMapPoint.CreateFromCoordinates(quest.mapID, quest.location.x, quest.location.y)
+        C_Map.SetUserWaypoint(waypoint)
 
-        if wpMapID and wpX and wpY then
-          local waypoint = UiMapPoint.CreateFromCoordinates(wpMapID, wpX, wpY)
-          C_Map.SetUserWaypoint(waypoint)
-        end
-
-        GQT.Utils:SetBackdropColor(self, 0.2, 0.8, 0.2, 0.3)
+        local r, g, b = 0.2, 0.8, 0.2
+        GQT.Utils:SetBackdropColor(self, r, g, b, 0.3)
 
         C_Timer.After(0.3, function()
           if self:IsShown() then
@@ -157,22 +155,19 @@ function GQT.UI:DisplayQuests()
   self.mainFrame:Show()
 end
 
-function GQT.UI:ShowEmptyState(loading)
+function GQT.UI:ShowEmptyState()
   self:CreateMainFrame()
 
-  self.mainFrame.title:SetText(loading and 'Gold World Quests (Loading...)' or 'Gold World Quests (0)')
-  self.mainFrame.totalGoldText:SetText('Total Gold: 0g 0s 0c')
+  self.mainFrame.title:SetText 'Gold World Quests (0)'
 
   local content = self.mainFrame.content
-  -- Efficiently clear existing children
-  local children = { content:GetChildren() }
-  for _, child in ipairs(children) do
+  for i = 1, content:GetNumChildren() do
+    local child = select(i, content:GetChildren())
     if child then
       child:Hide()
       child:SetParent(nil)
     end
   end
-  wipe(children)
 
   local emptyFrame = CreateFrame('Frame', nil, content, BackdropTemplateMixin and 'BackdropTemplate')
   emptyFrame:SetSize(content:GetWidth() - 20, 80)
@@ -193,14 +188,8 @@ function GQT.UI:ShowEmptyState(loading)
   local emptyText = emptyFrame:CreateFontString(nil, 'OVERLAY')
   emptyText:SetFont('Fonts\\FRIZQT__.TTF', 12, 'OUTLINE')
   emptyText:SetPoint('CENTER', emptyFrame, 'CENTER', 0, 0)
-  
-  if loading then
-    emptyText:SetText 'Loading quest data...'
-    emptyText:SetTextColor(1, 0.8, 0)
-  else
-    emptyText:SetText 'No gold quests found'
-    emptyText:SetTextColor(0.7, 0.7, 0.7)
-  end
+  emptyText:SetText 'No gold quests found'
+  emptyText:SetTextColor(0.7, 0.7, 0.7)
 
   self.mainFrame:Show()
 
@@ -221,7 +210,6 @@ function GQT.UI:CreateMinimapIcon()
           self.mainFrame:Hide()
           GQT:PreCacheQuestData()
         elseif self.mainFrame then
-          GQT.forceRefresh = true
           GQT:ScanForGoldQuests()
           self.mainFrame:Show()
         end
@@ -409,8 +397,6 @@ function GQT.UI:CreateMainFrame()
   end)
 
   refreshButton:SetScript('OnClick', function()
-    -- Force refresh flag makes the addon ignore the current scan state
-    GQT.forceRefresh = true
     GQT:PreCacheQuestData()
     GQT:ScanForGoldQuests()
   end)
