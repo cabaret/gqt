@@ -229,8 +229,7 @@ function GQT.UI:CreateMinimapIcon()
     OnTooltipShow = function(tooltip)
       tooltip:AddLine 'Gold Quest Tracker'
       tooltip:AddLine ' '
-      tooltip:AddLine 'Left-click to scan for gold quests'
-      tooltip:AddLine 'Right-click to toggle display'
+      tooltip:AddLine 'Left-click to toggle window'
     end,
   })
 

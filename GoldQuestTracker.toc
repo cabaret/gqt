@@ -1,4 +1,4 @@
-## Interface: 110100
+## Interface: 120000
 ## Title: Gold Quest Tracker
 ## Notes: Efficiently tracks world quests that give gold rewards across all expansion zones
 ## Author: carrots-silvermoon / Joris Ooms

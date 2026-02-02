@@ -37,8 +37,8 @@ end
 
 function GQT:PLAYER_ENTERING_WORLD()
   C_Timer.After(3, function()
-    print '|cFFFFD700Gold Quest Tracker:|r World data loaded and ready.'
-    self:ScanForGoldQuests()
+    print '|cFFFFD700Gold Quest Tracker:|r Ready. Use /gqt to open.'
+    self:ScanForGoldQuests(true) -- silent scan on login
   end)
 end
 
@@ -56,74 +56,79 @@ end
 function GQT:WORLD_QUEST_COMPLETED_BY_SPELL()
   C_Timer.After(1, function()
     if not self.isScanning then
-      self:ScanForGoldQuests()
+      self:ScanForGoldQuests(true) -- silent rescan when quest completed
     end
   end)
 end
 
-function GQT:ScanForGoldQuests()
+function GQT:ScanForGoldQuests(silent)
   local currentTime = GetTime()
-  
+
   if self.isScanning or (currentTime - self.lastScanTime < self.scanCooldown) then
     if GQT.Config.debug then
       print('|cFFFFD700Gold Quest Tracker:|r Scan already in progress or on cooldown.')
     end
     return
   end
-  
+
   self.isScanning = true
   self.lastScanTime = currentTime
   self.goldQuests = {}
-  
-  if self.UI then
+
+  -- Only show loading state if not silent and UI is visible
+  if not silent and self.UI and self.UI.mainFrame and self.UI.mainFrame:IsShown() then
     self.UI:ShowEmptyState(true)
   end
-  
+
   if GQT.Config.debug then
     print('|cFFFFD700Gold Quest Tracker:|r Starting quest scan...')
   end
-  
+
   self:PreloadQuestData()
   C_Timer.After(3, function()
     if self.isScanning then
       self:ProcessQuestData()
       self.isScanning = false
-      self.UI:DisplayQuests()
+      -- Only update UI if not silent or if UI is already visible
+      if not silent or (self.UI.mainFrame and self.UI.mainFrame:IsShown()) then
+        self.UI:DisplayQuests()
+      end
     end
   end)
 end
 
 function GQT:PreloadQuestData()
   local preloadCount = 0
-  
-  for mapID, zoneName in pairs(GQT.Config.trackedZones) do
-    local zoneQuests = C_TaskQuest.GetQuestsForPlayerByMapID(mapID) or {}
-    
-    for _, questData in ipairs(zoneQuests) do
-      if questData.questID and C_QuestLog.IsWorldQuest(questData.questID) then
-        C_TaskQuest.RequestPreloadRewardData(questData.questID)
+
+  for mapID, _ in pairs(GQT.Config.trackedZones) do
+    -- Use GetQuestsOnMap (correct API) instead of GetQuestsForPlayerByMapID
+    local zoneQuests = C_TaskQuest.GetQuestsOnMap(mapID) or {}
+
+    for _, questInfo in ipairs(zoneQuests) do
+      -- QuestPOIMapInfo uses questID (capital D)
+      if questInfo.questID and C_QuestLog.IsWorldQuest(questInfo.questID) then
+        C_TaskQuest.RequestPreloadRewardData(questInfo.questID)
         preloadCount = preloadCount + 1
       end
     end
   end
-  
 end
 
 function GQT:ProcessQuestData()
   local foundQuests = 0
   local totalQuests = 0
   local worldQuests = 0
-  
-  for mapID, zoneName in pairs(GQT.Config.trackedZones) do
-    local zoneQuests = C_TaskQuest.GetQuestsForPlayerByMapID(mapID) or {}
+
+  for mapID, _ in pairs(GQT.Config.trackedZones) do
+    -- Use GetQuestsOnMap (correct API)
+    local zoneQuests = C_TaskQuest.GetQuestsOnMap(mapID) or {}
     totalQuests = totalQuests + #zoneQuests
-    
-    
+
     for _, questData in ipairs(zoneQuests) do
+      -- QuestPOIMapInfo uses questID (capital D)
       if questData.questID and C_QuestLog.IsWorldQuest(questData.questID) then
         worldQuests = worldQuests + 1
-        
-        
+
         local questInfo = self:GetQuestRewardInfo(questData.questID, mapID)
         if questInfo and questInfo.goldReward >= GQT.Config.minimumGoldReward then
           local alreadyExists = false
@@ -133,7 +138,7 @@ function GQT:ProcessQuestData()
               break
             end
           end
-          
+
           if not alreadyExists then
             table.insert(self.goldQuests, questInfo)
             foundQuests = foundQuests + 1
@@ -142,7 +147,7 @@ function GQT:ProcessQuestData()
       end
     end
   end
-  
+
   if GQT.Config.debug then
     print('|cFFFFD700Gold Quest Tracker:|r Scanned ' .. totalQuests .. ' total quests, ' .. worldQuests .. ' world quests, found ' .. foundQuests .. ' gold quests.')
   end
@@ -158,10 +163,12 @@ function GQT:GetQuestRewardInfo(questID, mapID)
   if not HaveQuestData(questID) then
     return nil
   end
-  
-  local questName = C_TaskQuest.GetQuestInfoByQuestID(questID)
-  if not questName then 
-    return nil 
+
+  -- Use C_QuestLog.GetTitleForQuestID as primary (more reliable), fallback to C_TaskQuest
+  local questName = C_QuestLog.GetTitleForQuestID(questID)
+    or C_TaskQuest.GetQuestInfoByQuestID(questID)
+  if not questName then
+    return nil
   end
   
   if not mapID then
@@ -206,14 +213,16 @@ function GQT:GetQuestRewardInfo(questID, mapID)
   end
   
   local timeLeft = 'Unknown'
-  local timeLeftMinutes = C_TaskQuest.GetQuestTimeLeftMinutes(questID)
-  
-  if timeLeftMinutes then
-    if timeLeftMinutes <= 60 then
-      timeLeft = string.format('%d mins', timeLeftMinutes)
+  -- Use GetQuestTimeLeftSeconds for more precision
+  local timeLeftSeconds = C_TaskQuest.GetQuestTimeLeftSeconds(questID)
+
+  if timeLeftSeconds and timeLeftSeconds > 0 then
+    local totalMinutes = math.floor(timeLeftSeconds / 60)
+    if totalMinutes <= 60 then
+      timeLeft = string.format('%d mins', totalMinutes)
     else
-      local hours = math.floor(timeLeftMinutes / 60)
-      local mins = timeLeftMinutes % 60
+      local hours = math.floor(totalMinutes / 60)
+      local mins = totalMinutes % 60
       timeLeft = string.format('%dh %dm', hours, mins)
     end
   end
